@@ -4,11 +4,14 @@ from tajf.display.server import ServerThread
 if __name__ == '__main__':
   import sys
 
-  if len(sys.argv) !=2:
+  if len(sys.argv) > 2:
     print('PVMOE Event Display')
     print('USAGE: python pvmoedisplay.py <port>')
   else:
-    port = int(sys.argv[1])
+    if len(sys.argv) == 2:
+      port = int(sys.argv[1])
+    else:
+      port = None
     app = Application()
     serverthread = ServerThread(app, port)
     serverthread.start()

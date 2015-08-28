@@ -179,9 +179,12 @@ class HighlighterThread(StoppableThread):
     return {'table': before + highl + after}
 
   def run(self):
-    while not self.stopped() and not self.punch_time:
-      time.sleep(REFRESH / 3000)
+    while not self.stopped():
       obj = self.get_obj()
       self.app._display_obj = obj
-    if self.punch_time:
-      obj = self.get_obj()
+      if not self.stopped() and not self.punch_time:
+        time.sleep(REFRESH / 3000)
+      else:
+        break
+
+

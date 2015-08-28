@@ -1,6 +1,8 @@
 import asyncio
 import datetime
+import functools
 import json
+import threading
 from urllib import parse
 import zlib
 
@@ -8,19 +10,64 @@ import websockets
 
 from tajf.display.protocol import *
 
-@asyncio.coroutine
-def hello():
-  url = get_url()
-  print(url)
-  websocket = yield from websockets.connect(url)
-  name = 'Hello'
-  yield from websocket.send(name)
-  print("> {}".format(name))
+
+class ClientThread(threading.Thread):
+
+  def __init__(self, port=None, host=None):
+    self.port = int(port or DEFAULT_PORT)
+    self.host = host or DEFAULT_HOST
+    self.task = None
+    super().__init__()
+
+  def run(self):
+    self.loop = asyncio.new_event_loop()
+    self.async = functools.partial(asyncio.async,
+        loop=self.loop)
+    self.queue = asyncio.Queue(loop=self.loop)
+    self.loop.run_until_complete(self.create_client())
+    self.loop.run_until_complete(self.waiting_for_commands())
+    self.loop.run_until_complete(self.ws.close())
+    self.loop.stop()
+    self.loop.close()
+
+  @asyncio.coroutine
+  def create_client(self):
+    url = get_url()
+    self.ws = yield from websockets.connect(url,
+        loop=self.loop)
+
+  @asyncio.coroutine
+  def waiting_for_commands(self):
+    while True:
+      f = yield from self.queue.get()
+      if f is None:
+        break
+      else:
+        if self.task is not None:
+          self.task.cancel()
+        self.task = self.loop.create_task(f(self.ws, self.loop))
+
+  def command(self, f):
+    self.loop.call_soon_threadsafe(self.async,
+        self.queue.put(f))
+
+
+def applydefs(f):
+  @asyncio.coroutine
+  @functools.wraps(f)
+  def wrapper(ws=None, loop=None, **kwds):
+    if loop is None:
+      loop = asyncio.get_event_loop()
+    if ws is None:
+      url = get_url(**kwds)
+      ws = yield from websockets.connect(url, loop=loop)
+    yield from f(ws, loop)
+  return wrapper
+
 
 @asyncio.coroutine
-def static():
-  url = get_url()
-  websocket = yield from websockets.connect(url)
+@applydefs
+def static(ws=None, loop=None):
   obj = {'mode': 'static',
     'head': {'style': 'blue', 'values': ['NYT', 'cél']},
     'table': [
@@ -31,8 +78,8 @@ def static():
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from websocket.send(data)
-  yield from asyncio.sleep(5)
+  yield from ws.send(data)
+  yield from asyncio.sleep(5, loop=loop)
   obj = {'mode': 'static',
     'head': {'style': 'red', 'values': ['NYT', '21']},
     'table': [
@@ -43,13 +90,13 @@ def static():
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from websocket.send(data)
+  yield from ws.send(data)
   # print("> {!r}".format(obj))
 
+
 @asyncio.coroutine
-def highlight():
-  url = get_url()
-  websocket = yield from websockets.connect(url)
+@applydefs
+def highlight(ws=None, loop=None):
   now = datetime.datetime.now()
   td = datetime.timedelta(minutes=37, seconds=21)
   hstart = now - td
@@ -65,12 +112,34 @@ def highlight():
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from websocket.send(data)
-  yield from asyncio.sleep(22)
+  yield from ws.send(data)
+  yield from asyncio.sleep(22, loop=loop)
   obj = {'mode': 'highlight_punch',
          'punch_time': True}
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from websocket.send(data)
+  yield from ws.send(data)
 
-asyncio.get_event_loop().run_until_complete(highlight())
+
+if __name__ == '__main__':
+  clientthread = ClientThread()
+  clientthread.start()
+
+  shortcuts = {
+    'h': highlight,
+    's': static,
+  }
+
+  input_ = None
+  while input_ != 'q':
+    input_ = input('Shortcut letter?  >  ')
+    if input_ == 'q':
+      clientthread.command(None)
+      continue
+    if input_ not in shortcuts:
+      keys = ', '.join(sorted(shortcuts.keys()))
+      print('Valid shortcuts: ' + keys)
+      continue
+    else:
+      clientthread.command(shortcuts[input_])
+
