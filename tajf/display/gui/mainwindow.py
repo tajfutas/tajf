@@ -53,6 +53,8 @@ class Application(tkinter.Tk):
     super().__init__()
     self.precision = precision
     self.withdraw()  # assembling in background...
+    self.idle = threading.Event()
+    self.idle.set()
     self.queue = queue.Queue()
     self._display_obj = None
     self.title(self.TITLE)
@@ -75,10 +77,11 @@ class Application(tkinter.Tk):
         obj = self._display_obj
         self._display_obj = None
         self.set_display(obj)
-      #if self.queue.unfinished_tasks == 0:
-      #  self.clear()
+      if self.queue.unfinished_tasks == 0:
+        self.idle.set()
     else:
       self.set_mode(obj)
+      self.idle.clear()
     self.after(REFRESH, self._refresh)
 
   def relief_worker_thread(self):

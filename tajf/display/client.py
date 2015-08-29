@@ -39,17 +39,38 @@ class ClientThread(threading.Thread):
   @asyncio.coroutine
   def waiting_for_commands(self):
     while True:
-      f = yield from self.queue.get()
-      if f is None:
-        break
+      listener_task = self.loop.create_task(self.ws.recv())
+      producer_task = self.loop.create_task(self.queue.get())
+      done, pending = yield from asyncio.wait(
+        [listener_task, producer_task],
+        return_when=asyncio.FIRST_COMPLETED,
+        loop=self.loop)
+
+      if listener_task in done:
+        message = listener_task.result()
+        if not message:
+          break
+        self.on_message(message)
       else:
-        if self.task is not None:
-          self.task.cancel()
-        self.task = self.loop.create_task(f(self.ws, self.loop))
+        listener_task.cancel()
+
+      if producer_task in done:
+        f = producer_task.result()
+        if f is None:
+          break
+        else:
+          if self.task is not None:
+            self.task.cancel()
+          self.task = self.loop.create_task(f(self.ws, self.loop))
+      else:
+        producer_task.cancel()
 
   def command(self, f):
     self.loop.call_soon_threadsafe(self.async,
         self.queue.put(f))
+
+  def on_message(self, message):
+    pass
 
 
 def applydefs(f):
@@ -139,6 +160,8 @@ def highlight(ws=None, loop=None):
 
 if __name__ == '__main__':
   clientthread = ClientThread()
+  clientthread.on_message = lambda msg: print(
+      '\n{}\n'.format(msg))
   clientthread.start()
 
   shortcuts = {
