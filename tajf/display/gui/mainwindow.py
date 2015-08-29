@@ -96,13 +96,18 @@ class Application(tkinter.Tk):
     self.relief_display()
     self.set_display(obj)
 
+  def set_mode_punch(self, obj):
+    self.relief_worker_thread()
+    self.relief_display()
+    self.infopanel.head.set(obj['head'])
+    self._worker_thread = PunchThread(self, obj)
+    self._worker_thread.start()
+
   def set_mode_highlight(self, obj):
     self.relief_worker_thread()
     self.relief_display()
     self.infopanel.head.set(obj['head'])
     self._worker_thread = HighlighterThread(self, obj)
-    obj_ = self._worker_thread.get_obj()
-    self.set_display(obj_)
     self._worker_thread.start()
 
   def set_mode_highlight_punch(self, obj):
@@ -134,12 +139,41 @@ class StoppableThread(threading.Thread):
     return self._stop.isSet()
 
 
-class HighlighterThread(StoppableThread):
+class MainWindowThread(StoppableThread):
 
   def __init__(self, application, obj):
     super().__init__()
     self.app = application
     self.obj = obj
+
+
+class PunchThread(MainWindowThread):
+
+  BLINK_INTERVAL = 100
+  BLINK_COUNT = 10
+
+  def run(self):
+    t = self.obj.get('blink_interval', self.BLINK_INTERVAL)
+    N = self.obj.get('blink_count', self.BLINK_COUNT)
+    blinkobj = copy.deepcopy(self.obj)
+    punch_row_d = blinkobj['table'][self.obj['punch_pos'] - 1]
+    punch_row_d['style'] = 'emph1'
+    n = 0
+    while not self.stopped() and n < N:
+      if n % 2:
+        self.app._display_obj = blinkobj
+      else:
+        self.app._display_obj = self.obj
+      n += 1
+      if not self.stopped():
+        time.sleep(t / 1000)
+
+
+
+class HighlighterThread(MainWindowThread):
+
+  def __init__(self, application, obj):
+    super().__init__(application, obj)
     self.timedeltas = [string_to_timedelta(r['values'][-1])
                        for r in self.obj['table']]
     s_hstart = self.obj['highlighted_start']

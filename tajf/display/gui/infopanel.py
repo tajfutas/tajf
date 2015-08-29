@@ -136,32 +136,54 @@ class InfoPanelTable(InfoPanelWidget):
   def __init__(self, master=None, cnf={}, **kw):
     super().__init__(master=master, cnf=cnf, **kw)
     bg = self.cget('bg')
-    self.widgets, self.name_frames = [], []
+    self.widgets = []
+    self.frames = [[] for _ in range(self.N_COLS)]
     for r in range(self.N_ROWS):
-      pos =  tkinter.Label(self, bg=bg, width=2)
-      pos.grid(row=r, column=0, sticky='news')
+
+      pos_frame = tkinter.Frame(self, bg=bg)
+      self.frames[0].append(pos_frame)
+      pos_frame.grid(row=r, column=0, sticky='news')
+      #pos =  tkinter.Label(self, bg=bg, width=2)
+      #pos.grid(row=r, column=0, sticky='news')
+      pos =  tkinter.Label(pos_frame, bg=bg)
+      pos.place(relx=0.5, rely=0.5, anchor='c')
+
       name_frame = tkinter.Frame(self, bg=bg)
+      self.frames[1].append(name_frame)
       name_frame.grid(row=r, column=1, sticky='news')
       name = tkinter.Label(name_frame, bg=bg)
-      name.place(x=0, y=0)
-      club = tkinter.Label(self, bg=bg, width=5, anchor='nw')
-      club.grid(row=r, column=2, sticky='news')
-      time = tkinter.Label(self, bg=bg, width=7, anchor='ne')
-      time.grid(row=r, column=3, sticky='news')
+      name.place(x=0, rely=0.5, anchor='w')
+
+      club_frame = tkinter.Frame(self, bg=bg)
+      self.frames[2].append(club_frame)
+      club_frame.grid(row=r, column=2, sticky='news')
+      club = tkinter.Label(club_frame, bg=bg, width=5,
+                           anchor='w')
+      #club.grid(row=r, column=2, sticky='news')
+      club.place(x=0, rely=0.5, anchor='w')
+
+      time_frame = tkinter.Frame(self, bg=bg)
+      self.frames[3].append(time_frame)
+      time_frame.grid(row=r, column=3, sticky='news')
+      time = tkinter.Label(time_frame, bg=bg, width=7,
+                           anchor='e')
+      #time.grid(row=r, column=3, sticky='news')
+      time.place(relx=1, rely=0.5, anchor='e')
+
       self.widgets.append([pos, name, club, time])
-      self.name_frames.append(name_frame)
-    for r in range(self.N_ROWS):
-      self.rowconfigure(r, weight=1)
+
+    [self.rowconfigure(r, weight=1) for r in range(self.N_ROWS)]
     self.columnconfigure(1, weight=1)
     self.set_default_style(initial=True)
+    self.set_column_widths()
 
   def iter_all_widgets(self):
     yield from super().iter_all_widgets()
-    yield from self.name_frames
+    yield from (w for col in self.frames for w in col)
 
   def iter_row_widgets(self, row):
     yield from self.widgets[row]
-    yield self.name_frames[row]
+    yield from (col[row] for col in self.frames)
 
   def iter_label_widgets(self, row=None):
     yield from (w for w in self.iter_widgets(row)
@@ -173,7 +195,20 @@ class InfoPanelTable(InfoPanelWidget):
     else:
       yield from self.iter_row_widgets(row)
 
+  def on_configure(self, event):
+    super().on_configure(event)
+    self.set_column_widths()
+
+  def set_column_widths(self):
+    sample_strings = '99', None, 'XXXX', '+8:88:88'
+    for i, s in enumerate(sample_strings):
+      if s:
+        new_width = self.fonts['bold'].measure(s)
+        for w in self.frames[i]:
+          w.configure(width=new_width)
+
   def set_style(self, style_name, row=None):
+    root = self.winfo_toplevel()
     method = getattr(self, 'set_style_' + style_name)
     my_params, label_params, frame_params = method()
     self.config(**my_params)
@@ -182,6 +217,7 @@ class InfoPanelTable(InfoPanelWidget):
         w.config(**label_params)
       elif w.widgetName == 'frame':
         w.config(**frame_params)
+      root.update_idletasks()
 
   def set_style_normal(self):
     my_params = dict()
@@ -230,7 +266,7 @@ class InfoPanel(tkinter.Frame):
     self.queue = queue_ or queue.Queue(maxsize=1)
     self.head = InfoPanelHead(self)
     self.head.grid(row=0, column=0, sticky='news')
-    self.table = InfoPanelTable(self)
+    self.table = InfoPanelTable(self, bg='white')
     self.table.grid(row=0, column=1, sticky='news')
     self.rowconfigure(0, weight=1)
     self.columnconfigure(1, weight=1)

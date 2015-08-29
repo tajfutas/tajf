@@ -96,6 +96,23 @@ def static(ws=None, loop=None):
 
 @asyncio.coroutine
 @applydefs
+def punch(ws=None, loop=None):
+  obj = {'mode': 'punch',
+    'head': {'style': 'blue', 'values': ['NYT', 'cél']},
+    'table': [
+      {'values': [1, 'Dalos Máté', 'SPA', '37:31']},
+      {'values': [2, 'Tóth Tamás', 'TTE', '41:55']},
+      {'values': [3, 'Lajtai Zoltán', 'PVM', '43:23']},
+      ],
+    'punch_pos': 2,
+    }
+  data = json.dumps(obj).encode('utf-8')
+  data = zlib.compress(data)
+  yield from ws.send(data)
+
+
+@asyncio.coroutine
+@applydefs
 def highlight(ws=None, loop=None):
   now = datetime.datetime.now()
   td = datetime.timedelta(minutes=37, seconds=21)
@@ -120,13 +137,13 @@ def highlight(ws=None, loop=None):
   data = zlib.compress(data)
   yield from ws.send(data)
 
-
 if __name__ == '__main__':
   clientthread = ClientThread()
   clientthread.start()
 
   shortcuts = {
     'h': highlight,
+    'p': punch,
     's': static,
   }
 
