@@ -53,29 +53,30 @@ class Application(tkinter.Tk):
     super().__init__()
     self.precision = precision
     self.withdraw()  # assembling in background...
-    self._queue = queue.Queue()
+    self.queue = queue.Queue()
     self._display_obj = None
     self.title(self.TITLE)
     self.infopanel = infopanel.InfoPanel(self)
     self.infopanel.pack(expand=True, fill='both')
     self.minsize(*START_SIZE)
+    self.clear()
     self.deiconify()  # and show it
-    self.update()
     self._worker_thread = None
     self._refresh()
 
-  @property
-  def queue(self):
-    return self._queue
+  def clear(self):
+    self.infopanel.clear()
 
   def _refresh(self):
     try:
-      obj = self._queue.get_nowait()
+      obj = self.queue.get_nowait()
     except queue.Empty:
       if self._display_obj:
         obj = self._display_obj
         self._display_obj = None
         self.set_display(obj)
+      #if self.queue.unfinished_tasks == 0:
+      #  self.clear()
     else:
       self.set_mode(obj)
     self.after(REFRESH, self._refresh)
@@ -95,6 +96,7 @@ class Application(tkinter.Tk):
     self.relief_worker_thread()
     self.relief_display()
     self.set_display(obj)
+    self.queue.task_done()
 
   def set_mode_punch(self, obj):
     self.relief_worker_thread()
@@ -160,6 +162,8 @@ class PunchThread(MainWindowThread):
     punch_row_d['style'] = 'emph1'
     n = 0
     while not self.stopped() and n < N:
+      if n == N - 1:
+        punch_row_d['style'] = 'emph2'
       if n % 2:
         self.app._display_obj = blinkobj
       else:
@@ -167,7 +171,7 @@ class PunchThread(MainWindowThread):
       n += 1
       if not self.stopped():
         time.sleep(t / 1000)
-
+    self.app.queue.task_done()
 
 
 class HighlighterThread(MainWindowThread):
@@ -181,44 +185,67 @@ class HighlighterThread(MainWindowThread):
                                              STRP_ISO_FMT)
     self.punch_time = None
 
-  def get_obj(self):
-    if not self.punch_time:
-      style = 'emph1'
-    else:
-      style = 'emph2'
+  def punch_time_norm(self, punch_time):
+    µs = punch_time.microseconds // 10**(6-self.app.precision)
+    return datetime.timedelta(days=punch_time.days,
+        seconds=punch_time.seconds, microseconds=µs)
+
+  def get_highlight_display_obj(self):
+    punch_obj = self.get_punch_obj()
+    del punch_obj['mode']
+    del punch_obj['head']
+    punch_pos = punch_obj['punch_pos']
+    punch_obj['table'][punch_pos - 1]['style'] = 'emph1'
+    del punch_obj['punch_pos']
+    return punch_obj
+
+  def get_punch_obj(self):
     if not self.punch_time or self.punch_time is True:
       punch_time = datetime.datetime.now() - self.hstart
     else:
       punch_time = string_to_timedelta(self.punch_time)
-    µs = punch_time.microseconds // 10**(6-self.app.precision)
-    punch_time = datetime.timedelta(days=punch_time.days,
-      seconds=punch_time.seconds, microseconds=µs)
+    punch_time = self.punch_time_norm(punch_time)
     htime = timedelta_to_string(punch_time, self.app.precision)
     i = bisect.bisect_left(self.timedeltas, punch_time)
     h = [i + 1] + self.obj['highlighted'] + [htime]
-    highl = [{'style': style, 'values': h}]
+    highl = [{'values': h}]
     if i == 0:
       before = []
       after = copy.deepcopy(self.obj['table'][i:i+2])
+      punch_pos = 1
+    elif i == len(self.obj['table']):
+      before = copy.deepcopy(self.obj['table'][i-2:i])
+      after = []
+      punch_pos = len(before) + 1
     else:
       before = copy.deepcopy(self.obj['table'][i-1:i])
       after = copy.deepcopy(self.obj['table'][i:i+1])
-    if before and self.timedeltas[i-1] == punch_time:
-      h[0] = ''
-    if after and punch_time < self.timedeltas[i]:
-      for r in after:
-        r['values'][0] += 1
-    elif after and punch_time == self.timedeltas[i]:
-      after[0]['values'][0] = ''
-    return {'table': before + highl + after}
+      punch_pos = 2
+    table = before + highl + after
+    table_timedeltas = [string_to_timedelta(r['values'][-1])
+                        for r in table]
+    last_pos = i + 1
+    for ti, tr in enumerate(table):
+      if ti == 0:
+        tr['values'][0] = last_pos
+      elif table_timedeltas[ti] == table_timedeltas[ti-1]:
+        tr['values'][0] = ''
+      else:
+        tr['values'][0] = last_pos
+      last_pos += 1
+    return {'mode': 'punch', 'head': self.obj['head'],
+            'table': table, 'punch_pos': punch_pos}
 
   def run(self):
     while not self.stopped():
-      obj = self.get_obj()
+      if self.punch_time:
+        obj = self.get_punch_obj()
+        self.app.set_mode_punch(obj)
+        break
+      obj = self.get_highlight_display_obj()
       self.app._display_obj = obj
       if not self.stopped() and not self.punch_time:
         time.sleep(REFRESH / 3000)
       else:
         break
-
-
+    self.app.queue.task_done()

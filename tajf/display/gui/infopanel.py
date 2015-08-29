@@ -10,17 +10,20 @@ class InfoPanelWidget(tkinter.Frame):
   def __init__(self, master=None, cnf={}, **kw):
     self.fonts = {}
     super().__init__(master=master, cnf=cnf, **kw)
-    self.bind('<Configure>', self.on_configure)
+    self.curr_size = 0, 0
+    self.prev_size = 0, 0
+    self.bind('<Configure>', self._on_configure)
 
   def alter_fonts(self, normal=None, bold=None, initial=False):
+    label_w = next(self.iter_all_label_widgets())
     if normal is None:
-      first_font = nametofont(self.widgets[0][0].cget('font'))
+      first_font = nametofont(label_w.cget('font'))
       cnormal = dict(first_font.configure())
       cnormal['weight'] = 'normal'
     else:
       cnormal = dict(normal.configure())
     if bold is None:
-      first_font = nametofont(self.widgets[0][0].cget('font'))
+      first_font = nametofont(label_w.cget('font'))
       cbold = dict(first_font.configure())
       cbold['weight'] = 'bold'
     else:
@@ -29,7 +32,7 @@ class InfoPanelWidget(tkinter.Frame):
       self.fonts['normal'] = Font(**cnormal)
       self.fonts['bold'] = Font(**cbold)
       [w.configure(font=self.fonts['normal'])
-       for w in self.iter_label_widgets()]
+       for w in self.iter_all_label_widgets()]
     else:
       self.fonts['normal'].configure(**cnormal)
       self.fonts['bold'].configure(**cbold)
@@ -37,12 +40,47 @@ class InfoPanelWidget(tkinter.Frame):
   def iter_all_widgets(self):
     yield from (w for row in self.widgets for w in row)
 
-  def iter_label_widgets(self):
-    yield from (w for w in self.iter_all_widgets()
-                if w.widgetName == 'label')
+  def iter_row_widgets(self, row):
+    yield from iter(self.widgets[row])
+
+  def iter_frame_widgets(self, row=None):
+    if row is None:
+      yield from self.iter_all_frame_widgets()
+    else:
+      yield from self.iter_row_frame_widgets(row)
+
+  def iter_all_frame_widgets(self):
+    yield from (w for row in self.frames for w in row)
+
+  def iter_row_frame_widgets(self, row):
+    yield from iter(self.frames[row])
+
+  def iter_label_widgets(self, row=None):
+    if row is None:
+      yield from self.iter_all_label_widgets()
+    else:
+      yield from self.iter_row_label_widgets(row)
+
+  def iter_all_label_widgets(self):
+    yield from (w for row in self.labels for w in row)
+
+  def iter_row_label_widgets(self, row):
+    yield from iter(self.labels[row])
+
+  def _on_configure(self, event):
+    self.on_before_configure(event)
+    self.on_configure(event)
+    self.on_after_configure(event)
+
+  def on_before_configure(self, event):
+    self.curr_size = event.width, event.height
 
   def on_configure(self, event):
-    self.adjust_fonts(event)
+    if self.curr_size[1] != self.prev_size[1]:
+      self.adjust_fonts(event)
+
+  def on_after_configure(self, event):
+    self.prev_size = self.curr_size
 
   def adjust_fonts(self, event):
     new_font = Font(**self.fonts['normal'].configure())
@@ -100,11 +138,17 @@ class InfoPanelHead(InfoPanelWidget):
     class_.grid(row=0, column=0, sticky='news')
     control = tkinter.Label(self)
     control.grid(row=1, column=0, sticky='news')
+    self.labels = [[class_], [control]]
     self.widgets = [[class_], [control]]
     for r in range(self.N_ROWS):
       self.rowconfigure(r, weight=1)
     self.columnconfigure(0, weight=1)
     self.set_default_style(initial=True)
+
+  def clear(self):
+    self.set_default_style(initial=True)
+    for w in self.iter_all_label_widgets():
+      w.config(text='')
 
   def set_style_blue(self):
     for w in self.iter_all_widgets():
@@ -137,74 +181,64 @@ class InfoPanelTable(InfoPanelWidget):
     super().__init__(master=master, cnf=cnf, **kw)
     bg = self.cget('bg')
     self.widgets = []
-    self.frames = [[] for _ in range(self.N_COLS)]
+    self.labels = [[] for _ in range(self.N_ROWS)]
+    self.frames = [[] for _ in range(self.N_ROWS)]
     for r in range(self.N_ROWS):
 
       pos_frame = tkinter.Frame(self, bg=bg)
-      self.frames[0].append(pos_frame)
+      self.frames[r].append(pos_frame)
       pos_frame.grid(row=r, column=0, sticky='news')
-      #pos =  tkinter.Label(self, bg=bg, width=2)
-      #pos.grid(row=r, column=0, sticky='news')
       pos =  tkinter.Label(pos_frame, bg=bg)
+      self.labels[r].append(pos)
       pos.place(relx=0.5, rely=0.5, anchor='c')
 
       name_frame = tkinter.Frame(self, bg=bg)
-      self.frames[1].append(name_frame)
+      self.frames[r].append(name_frame)
       name_frame.grid(row=r, column=1, sticky='news')
       name = tkinter.Label(name_frame, bg=bg)
+      self.labels[r].append(name)
       name.place(x=0, rely=0.5, anchor='w')
 
       club_frame = tkinter.Frame(self, bg=bg)
-      self.frames[2].append(club_frame)
+      self.frames[r].append(club_frame)
       club_frame.grid(row=r, column=2, sticky='news')
       club = tkinter.Label(club_frame, bg=bg, width=5,
                            anchor='w')
-      #club.grid(row=r, column=2, sticky='news')
+      self.labels[r].append(club)
       club.place(x=0, rely=0.5, anchor='w')
 
       time_frame = tkinter.Frame(self, bg=bg)
-      self.frames[3].append(time_frame)
+      self.frames[r].append(time_frame)
       time_frame.grid(row=r, column=3, sticky='news')
       time = tkinter.Label(time_frame, bg=bg, width=7,
                            anchor='e')
-      #time.grid(row=r, column=3, sticky='news')
+      self.labels[r].append(time)
       time.place(relx=1, rely=0.5, anchor='e')
 
-      self.widgets.append([pos, name, club, time])
+      self.widgets.append([pos_frame, pos, name_frame, name,
+                           club_frame, club, time_frame, time])
 
     [self.rowconfigure(r, weight=1) for r in range(self.N_ROWS)]
     self.columnconfigure(1, weight=1)
     self.set_default_style(initial=True)
     self.set_column_widths()
 
-  def iter_all_widgets(self):
-    yield from super().iter_all_widgets()
-    yield from (w for col in self.frames for w in col)
-
-  def iter_row_widgets(self, row):
-    yield from self.widgets[row]
-    yield from (col[row] for col in self.frames)
-
-  def iter_label_widgets(self, row=None):
-    yield from (w for w in self.iter_widgets(row)
-                if w.widgetName == 'label')
-
-  def iter_widgets(self, row=None):
-    if row is None:
-      yield from self.iter_all_widgets()
-    else:
-      yield from self.iter_row_widgets(row)
+  def clear(self):
+    self.set_default_style(initial=True)
+    for w in self.iter_all_label_widgets():
+      w.config(text='')
 
   def on_configure(self, event):
     super().on_configure(event)
-    self.set_column_widths()
+    if self.curr_size[1] != self.prev_size[1]:
+      self.set_column_widths()
 
   def set_column_widths(self):
     sample_strings = '99', None, 'XXXX', '+8:88:88'
     for i, s in enumerate(sample_strings):
       if s:
         new_width = self.fonts['bold'].measure(s)
-        for w in self.frames[i]:
+        for w in (row[i] for row in self.frames):
           w.configure(width=new_width)
 
   def set_style(self, style_name, row=None):
@@ -212,12 +246,10 @@ class InfoPanelTable(InfoPanelWidget):
     method = getattr(self, 'set_style_' + style_name)
     my_params, label_params, frame_params = method()
     self.config(**my_params)
-    for w in self.iter_widgets(row):
-      if w.widgetName == 'label':
-        w.config(**label_params)
-      elif w.widgetName == 'frame':
-        w.config(**frame_params)
-      root.update_idletasks()
+    for w in self.iter_frame_widgets(row):
+      w.config(**frame_params)
+    for w in self.iter_label_widgets(row):
+      w.config(**label_params)
 
   def set_style_normal(self):
     my_params = dict()
@@ -229,19 +261,19 @@ class InfoPanelTable(InfoPanelWidget):
   def set_style_emph1(self):
     my_params = dict()
     label_params = dict(bg='orange', fg='black',
-                        font=self.fonts['bold'])
+                        font=self.fonts['normal'])
     frame_params = dict(bg='orange')
     return my_params, label_params, frame_params
 
   def set_style_emph2(self):
     my_params = dict()
-    label_params = dict(bg='green', fg='black',
-                        font=self.fonts['bold'])
-    frame_params = dict(bg='green')
+    label_params = dict(bg='red', fg='black',
+                        font=self.fonts['normal'])
+    frame_params = dict(bg='red')
     return my_params, label_params, frame_params
 
   def set_values(self, values, row):
-      for i, w in enumerate(self.iter_label_widgets(row)):
+      for i, w in enumerate(self.iter_row_label_widgets(row)):
         w.config(text=str(values[i]))
 
   def set(self, obj):
@@ -271,6 +303,10 @@ class InfoPanel(tkinter.Frame):
     self.rowconfigure(0, weight=1)
     self.columnconfigure(1, weight=1)
     self.bind('<Configure>', self.on_configure)
+
+  def clear(self):
+    self.head.clear()
+    self.table.clear()
 
   def on_configure(self, event):
     self.adjust_borderwidth(event)
