@@ -19,6 +19,9 @@ def string_to_timedelta(s):
   restr = ('^(?P<minutes>\d+)?:?(?P<seconds>\d+)?'
            '\.?(?P<prec_value>\d+)?$')
   m = re.search(restr, s)
+  if m is None:
+    errfstr = 'invaild timedelta string: {!r}'
+    raise ValueError(errfstr.format(s))
   d = {k: int(v) for k, v in m.groupdict().items() if v}
   s_prec_value = m.group('prec_value')
   if s_prec_value:
@@ -27,6 +30,17 @@ def string_to_timedelta(s):
     d['microseconds'] = µs
     del d['prec_value']
   return datetime.timedelta(**d)
+
+def seq_of_strings_to_timedelta(seq):
+  result = []
+  for s in seq:
+    try:
+      td = string_to_timedelta(s)
+    except ValueError:
+      break
+    else:
+      result.append(td)
+  return result
 
 
 # based on source code of datetime.py
@@ -95,19 +109,6 @@ class Application(tkinter.Tk):
   def set_mode(self, obj):
     getattr(self, 'set_mode_{}'.format(obj['mode']))(obj)
 
-  def set_mode_static(self, obj):
-    self.relief_worker_thread()
-    self.relief_display()
-    self.set_display(obj)
-    self.queue.task_done()
-
-  def set_mode_punch(self, obj):
-    self.relief_worker_thread()
-    self.relief_display()
-    self.infopanel.head.set(obj['head'])
-    self._worker_thread = PunchThread(self, obj)
-    self._worker_thread.start()
-
   def set_mode_highlight(self, obj):
     self.relief_worker_thread()
     self.relief_display()
@@ -117,6 +118,26 @@ class Application(tkinter.Tk):
 
   def set_mode_highlight_punch(self, obj):
     self._worker_thread.punch_time = obj['punch_time']
+
+  def set_mode_punch(self, obj):
+    self.relief_worker_thread()
+    self.relief_display()
+    self.infopanel.head.set(obj['head'])
+    self._worker_thread = PunchThread(self, obj)
+    self._worker_thread.start()
+
+  def set_mode_results(self, obj):
+    self.relief_worker_thread()
+    self.relief_display()
+    self.infopanel.head.set(obj['head'])
+    self._worker_thread = ResultsThread(self, obj)
+    self._worker_thread.start()
+
+  def set_mode_static(self, obj):
+    self.relief_worker_thread()
+    self.relief_display()
+    self.set_display(obj)
+    self.queue.task_done()
 
   def set_display(self, obj):
     if 'head' in obj:
@@ -152,37 +173,12 @@ class MainWindowThread(StoppableThread):
     self.obj = obj
 
 
-class PunchThread(MainWindowThread):
-
-  BLINK_INTERVAL = 100
-  BLINK_COUNT = 10
-
-  def run(self):
-    t = self.obj.get('blink_interval', self.BLINK_INTERVAL)
-    N = self.obj.get('blink_count', self.BLINK_COUNT)
-    blinkobj = copy.deepcopy(self.obj)
-    punch_row_d = blinkobj['table'][self.obj['punch_pos'] - 1]
-    punch_row_d['style'] = 'emph1'
-    n = 0
-    while not self.stopped() and n < N:
-      if n == N - 1:
-        punch_row_d['style'] = 'emph2'
-      if n % 2:
-        self.app._display_obj = blinkobj
-      else:
-        self.app._display_obj = self.obj
-      n += 1
-      if not self.stopped():
-        time.sleep(t / 1000)
-    self.app.queue.task_done()
-
-
 class HighlighterThread(MainWindowThread):
 
   def __init__(self, application, obj):
     super().__init__(application, obj)
-    self.timedeltas = [string_to_timedelta(r['values'][-1])
-                       for r in self.obj['table']]
+    seq = (r['values'][-1] for r in self.obj['table'])
+    self.timedeltas = seq_of_strings_to_timedelta(seq)
     s_hstart = self.obj['highlighted_start']
     self.hstart = datetime.datetime.strptime(s_hstart,
                                              STRP_ISO_FMT)
@@ -225,8 +221,8 @@ class HighlighterThread(MainWindowThread):
       after = copy.deepcopy(self.obj['table'][i:i+1])
       punch_pos = 2
     table = before + highl + after
-    table_timedeltas = [string_to_timedelta(r['values'][-1])
-                        for r in table]
+    seq = (r['values'][-1] for r in table)
+    table_timedeltas = seq_of_strings_to_timedelta(seq)
     last_pos = i + 1
     for ti, tr in enumerate(table):
       if ti == 0:
@@ -251,4 +247,47 @@ class HighlighterThread(MainWindowThread):
         time.sleep(REFRESH / 3000)
       else:
         break
+    self.app.queue.task_done()
+
+
+class PunchThread(MainWindowThread):
+
+  BLINK_INTERVAL = 100
+  BLINK_COUNT = 10
+
+  def run(self):
+    t = self.obj.get('blink_interval', self.BLINK_INTERVAL)
+    N = self.obj.get('blink_count', self.BLINK_COUNT)
+    blinkobj = copy.deepcopy(self.obj)
+    punch_row_d = blinkobj['table'][self.obj['punch_pos'] - 1]
+    punch_row_d['style'] = 'emph1'
+    n = 0
+    while not self.stopped() and n < N:
+      if n == N - 1:
+        punch_row_d['style'] = 'emph2'
+      if n % 2:
+        self.app._display_obj = blinkobj
+      else:
+        self.app._display_obj = self.obj
+      n += 1
+      if not self.stopped():
+        time.sleep(t / 1000)
+    self.app.queue.task_done()
+
+
+class ResultsThread(MainWindowThread):
+
+  TURN_INTERVAL = 5000
+
+  def run(self):
+    t = self.obj.get('turn_interval', self.TURN_INTERVAL)
+    result_rows = len(self.obj['table'])
+    panel_rows = self.app.infopanel.table.N_ROWS
+    n = 0
+    while not self.stopped() and n < result_rows:
+      table = self.obj['table'][n:n+panel_rows]
+      self.app._display_obj = {'table': table}
+      n += panel_rows
+      if not self.stopped():
+        time.sleep(t / 1000)
     self.app.queue.task_done()
