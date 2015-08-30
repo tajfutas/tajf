@@ -1,4 +1,7 @@
 
+import copy
+import bisect
+import datetime
 import threading
 import time
 import tkinter
@@ -300,9 +303,9 @@ class InfoPanelTable(InfoPanelWidget):
 class InfoPanel(tkinter.Frame):
 
   DEFAULT_BACKGROUND = 'black'
-  DEFULT_BORDERWIDTH = 2
+  DEFAULT_PRECISION = 0
 
-  MODES = ('highlight', 'highlight_punch', 'punch',
+  MODES = ('follow', 'follow_stop_punch', 'punch',
       'results', 'static')
 
   def __init__(self, master=None, status=None,
@@ -345,34 +348,37 @@ class InfoPanel(tkinter.Frame):
   def adjust_head_width(self, event):
     self.columnconfigure(0, minsize=event.height)
 
-  def show(self, payload_obj):
+  def show(self, payload_obj, **kwgs):
     mode = payload_obj.get('mode')
     if mode not in self.MODES:
       raise ValueError('Invalid mode: {}'.format(mode))
     f_mode_handler = getattr(self, 'set_mode_{}'.format(mode))
-    return f_mode_handler(payload_obj)
+    return f_mode_handler(payload_obj, **kwgs)
 
-  def close(self):
+  def close(self, **kwgs):
     self.clear()
     self.relief_worker_thread()
     return True
 
-  def set_mode_highlight(self, payload_obj):
+  def set_mode_follow(self, payload_obj):
     self.clear()
     self.relief_worker_thread()
     self.head.set(payload_obj['head'])
-    self._worker_thread = HighlighterThread(self, payload_obj)
+    self._worker_thread = FollowerThread(self, payload_obj)
     self._worker_thread.start()
     return True
 
-  def set_mode_highlight_punch(self, payload_obj):
+  def set_mode_follow_stop_punch(self, payload_obj):
     self._worker_thread.punch_time = payload_obj['punch_time']
     return True
 
-  def set_mode_punch(self, payload_obj):
-    self.clear()
+  def set_mode_punch(self, payload_obj, clear=False):
+    if clear:
+      self.clear()
     self.relief_worker_thread()
-    self.head.set(payload_obj['head'])
+    head = payload_obj.get('head')
+    if head is not None:
+      self.head.set(head)
     self._worker_thread = PunchThread(self, payload_obj)
     self._worker_thread.start()
     return True
@@ -407,22 +413,28 @@ class InfoPanelThread(threads.StoppableThread):
     self.obj = obj
 
 
-class HighlighterThread(InfoPanelThread):
+class FollowerThread(InfoPanelThread):
+
+  DEFAULT_REFRESH = 0.03
 
   def __init__(self, infopanel, obj):
     super().__init__(infopanel, obj)
-    seq = (r['values'][-1] for r in self.obj['table'])
-    self.timedeltas = seq_of_strings_to_timedelta(seq)
-    s_hstart = self.obj['highlighted_start']
+    self.precision = self.obj.get('precision',
+        self.ip.DEFAULT_PRECISION)
+    self.table = [r for r in self.obj['table']
+        if r['values'][0] != '']
+    seq = (r['values'][-1] for r in self.table)
+    self.timedeltas = timeconv.seq_of_strings_to_timedelta(seq)
+    s_hstart = self.obj['followed_start']
     self.hstart = timeconv.string_to_datetime(s_hstart)
     self.punch_time = None
 
   def punch_time_norm(self, punch_time):
-    µs = punch_time.microseconds // 10**(6-self.ip.precision)
+    µs = punch_time.microseconds // 10**(6-self.precision)
     return datetime.timedelta(days=punch_time.days,
         seconds=punch_time.seconds, microseconds=µs)
 
-  def get_highlight_display_obj(self):
+  def get_follow_display_obj(self):
     punch_obj = self.get_punch_obj()
     del punch_obj['mode']
     del punch_obj['head']
@@ -433,77 +445,67 @@ class HighlighterThread(InfoPanelThread):
 
   def get_punch_obj(self):
     if not self.punch_time or self.punch_time is True:
-      punch_time = datetime.datetime.now() - self.hstart
+      punch_timedelta = datetime.datetime.now() - self.hstart
     else:
-      punch_time = string_to_timedelta(self.punch_time)
-    punch_time = self.punch_time_norm(punch_time)
-    htime = timedelta_to_string(punch_time, self.ip.precision)
-    i = bisect.bisect_left(self.timedeltas, punch_time)
-    h = [i + 1] + self.obj['highlighted'] + [htime]
-    highl = [{'values': h}]
-    if i == 0:
-      before = []
-      after = copy.deepcopy(self.obj['table'][i:i+2])
-      punch_pos = 1
-    elif i == len(self.obj['table']):
-      before = copy.deepcopy(self.obj['table'][i-2:i])
-      after = []
-      punch_pos = len(before) + 1
-    else:
-      before = copy.deepcopy(self.obj['table'][i-1:i])
-      after = copy.deepcopy(self.obj['table'][i:i+1])
-      punch_pos = 2
-    table = before + highl + after
-    seq = (r['values'][-1] for r in table)
-    table_timedeltas = seq_of_strings_to_timedelta(seq)
-    last_pos = i + 1
-    for ti, tr in enumerate(table):
-      if ti == 0:
-        tr['values'][0] = last_pos
-      elif table_timedeltas[ti] == table_timedeltas[ti-1]:
-        tr['values'][0] = ''
-      else:
-        tr['values'][0] = last_pos
-      last_pos += 1
-    return {'mode': 'punch', 'head': self.obj['head'],
-            'table': table, 'punch_pos': punch_pos}
+      punch_timedelta = timeconv.string_to_timedelta(
+          self.punch_time)
+    name, club = self.obj['followed']
+    return get_punch_obj(punch_timedelta, name, club,
+      self.obj['head'], self.table, timedeltas=self.timedeltas,
+      precision=self.precision)
 
   def run(self):
+    self.ip.status.update(self.obj)
+    with self.ip.changed_cond:
+      self.ip.changed_cond.notify_all()
     while not self.stopped():
       if self.punch_time:
-        obj = self.get_punch_obj()
-        self.ip.set_mode_punch(obj)
+        punch_obj = self.get_punch_obj()
+        del punch_obj['head']
+        self.ip.set_mode_punch(punch_obj)
         break
-      obj = self.get_highlight_display_obj()
-      self.ip._display_obj = obj
+      self.ip.set_display(self.get_follow_display_obj())
       if not self.stopped() and not self.punch_time:
-        time.sleep(REFRESH / 3000)
-      else:
-        break
+        time.sleep(self.DEFAULT_REFRESH)
 
 
 class PunchThread(InfoPanelThread):
 
   BLINK_INTERVAL = 100
   BLINK_COUNT = 10
+  RELAX_INTERVAL = 5000
 
   def run(self):
     t = self.obj.get('blink_interval', self.BLINK_INTERVAL)
     N = self.obj.get('blink_count', self.BLINK_COUNT)
+    R = self.obj.get('relax_interval', self.RELAX_INTERVAL)
     blinkobj = copy.deepcopy(self.obj)
     punch_row_d = blinkobj['table'][self.obj['punch_pos'] - 1]
     punch_row_d['style'] = 'emph1'
-    n = 0
-    while not self.stopped() and n < N:
-      if n == N - 1:
-        punch_row_d['style'] = 'emph2'
-      if n % 2:
-        self.ip._display_obj = blinkobj
+    relax_N = R // t
+    n, relax_n = 0, 0
+    self.ip.status.update(self.obj)
+    with self.ip.changed_cond:
+      self.ip.changed_cond.notify_all()
+    while not self.stopped():
+      if n < N:
+        if n == N - 1:
+          punch_row_d['style'] = 'emph2'
+        if n % 2:
+          self.ip.set_display(blinkobj)
+        else:
+          self.ip.set_display(self.obj)
+        n += 1
+      elif relax_n < relax_N:
+        relax_n += 1
       else:
-        self.ip._display_obj = self.obj
-      n += 1
+        break
       if not self.stopped():
         time.sleep(t / 1000)
+    if not self.stopped():
+      self.ip.clear()
+      with self.ip.changed_cond:
+        self.ip.changed_cond.notify_all()
 
 
 class ResultsThread(InfoPanelThread):
@@ -529,6 +531,44 @@ class ResultsThread(InfoPanelThread):
       self.ip.clear()
       with self.ip.changed_cond:
           self.ip.changed_cond.notify_all()
+
+
+def get_punch_obj(punch_timedelta, name, club, head, table,
+    timedeltas=None, precision=0):
+  htime = timeconv.timedelta_to_string(punch_timedelta,
+      precision)
+  if timedeltas is None:
+    seq = (r['values'][-1] for r in table)
+    timedeltas = timeconv.seq_of_strings_to_timedelta(seq)
+  i = bisect.bisect_left(timedeltas, punch_timedelta)
+  h = [i + 1] + [name, club] + [htime]
+  highl = [{'values': h}]
+  if i == 0:
+    before = []
+    after = copy.deepcopy(table[i:i+2])
+    punch_pos = 1
+  elif i == len(table):
+    before = copy.deepcopy(table[i-2:i])
+    after = []
+    punch_pos = len(before) + 1
+  else:
+    before = copy.deepcopy(table[i-1:i])
+    after = copy.deepcopy(table[i:i+1])
+    punch_pos = 2
+  table_ = before + highl + after
+  seq = (r['values'][-1] for r in table_)
+  table_timedeltas = timeconv.seq_of_strings_to_timedelta(seq)
+  last_pos = i + 1
+  for ti, tr in enumerate(table_):
+    if ti == 0:
+      tr['values'][0] = last_pos
+    elif table_timedeltas[ti] == table_timedeltas[ti-1]:
+      tr['values'][0] = ''
+    else:
+      tr['values'][0] = last_pos
+    last_pos += 1
+  return {'mode': 'punch', 'head': head, 'table': table_,
+      'punch_pos': punch_pos}
 
 
 if __name__ == "__main__":

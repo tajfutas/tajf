@@ -1,14 +1,18 @@
 import datetime
+import re
 
-STRP_ISO_FMT = '%Y-%m-%dT%H:%M:%S.%f'
-STRP_ISO_FMT2 = '%Y-%m-%dT%H:%M:%S'
+STRP_ISO_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S'
+  '%Y-%m-%d %H:%M:%S.%f' '%Y-%m-%dT%H:%M:%S.%f')
 
 
 def string_to_datetime(s):
-  try:
-    return datetime.datetime.strptime(s_hstart, STRP_ISO_FMT)
-  except ValueError:
-    return datetime.datetime.strptime(s_hstart, STRP_ISO_FMT2)
+  for fmt in STRP_ISO_FORMATS:
+    try:
+      return datetime.datetime.strptime(s, fmt)
+    except Exception as err:
+      pass
+  else:
+    raise err
 
 
 def string_to_timedelta(s):

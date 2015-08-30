@@ -58,6 +58,7 @@ def get_chip_times(chip_nr, start_time, timedeltas):
     ref_delta = delta
   return result
 
+
 def get_chip_start_time(chip_nr, start_time,
     chip_start_timedelta):
   start_date = datetime.datetime(start_time.year,

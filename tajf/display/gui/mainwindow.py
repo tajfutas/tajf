@@ -44,7 +44,7 @@ class Main(tkinter.Frame):
     for w in self.widgets.values():
       w.close()
 
-  def command(self, code, widget_name, payload_obj):
+  def command(self, code, widget_name, payload_obj, **kwgs):
     code_handler_name = self.handler_abbr.get(code)
     if code_handler_name is None:
       exc_msg = 'Invalid client code: {}'.format(code)
@@ -54,7 +54,7 @@ class Main(tkinter.Frame):
       handler_func_name = 'handle_{}'.format(code_handler_name)
     try:
       accepted = getattr(self, handler_func_name)(
-          widget_name, payload_obj)
+          widget_name, payload_obj, **kwgs)
     except Exception as exc:
       return display_proto.A_ERROR, exc
     else:
@@ -64,14 +64,14 @@ class Main(tkinter.Frame):
         answer_code = display_proto.A_DENIED
       return answer_code, None
 
-  def handle_show(self, widget_name, payload_obj):
+  def handle_show(self, widget_name, payload_obj, **kwgs):
     w = self.widgets[widget_name]
-    accepted = w.show(payload_obj)
+    accepted = w.show(payload_obj, **kwgs)
     return accepted
 
-  def handle_close(self, widget_name, payload_obj):
+  def handle_close(self, widget_name, payload_obj, **kwgs):
     w = self.widgets[widget_name]
-    accepted = w.close()
+    accepted = w.close(**kwgs)
     return accepted
 
 
