@@ -13,7 +13,7 @@ if __name__ == '__main__':
     else:
       port = None
     app = Application()
-    serverthread = ServerThread(app, port)
+    serverthread = ServerThread(app, port, host='0.0.0.0')
     serverthread.start()
     app.mainloop()
     serverthread.loop.stop()

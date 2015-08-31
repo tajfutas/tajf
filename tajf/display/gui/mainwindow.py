@@ -13,9 +13,13 @@ START_SIZE = 640, 120
 REFRESH = 25
 
 STRP_ISO_FMT = '%Y-%m-%dT%H:%M:%S.%f'
+STRP_ISO_FMT2 = '%Y-%m-%dT%H:%M:%S'
 
 
 def string_to_timedelta(s):
+  if s is None:
+    errfstr = 'invaild timedelta string: {!r}'
+    raise ValueError(errfstr.format(s))
   restr = ('^(?P<minutes>\d+)?:?(?P<seconds>\d+)?'
            '\.?(?P<prec_value>\d+)?$')
   m = re.search(restr, s)
@@ -180,8 +184,12 @@ class HighlighterThread(MainWindowThread):
     seq = (r['values'][-1] for r in self.obj['table'])
     self.timedeltas = seq_of_strings_to_timedelta(seq)
     s_hstart = self.obj['highlighted_start']
-    self.hstart = datetime.datetime.strptime(s_hstart,
-                                             STRP_ISO_FMT)
+    try:
+      self.hstart = datetime.datetime.strptime(s_hstart,
+                                               STRP_ISO_FMT)
+    except ValueError:
+      self.hstart = datetime.datetime.strptime(s_hstart,
+                                               STRP_ISO_FMT2)
     self.punch_time = None
 
   def punch_time_norm(self, punch_time):
@@ -221,6 +229,7 @@ class HighlighterThread(MainWindowThread):
       after = copy.deepcopy(self.obj['table'][i:i+1])
       punch_pos = 2
     table = before + highl + after
+    print(table)
     seq = (r['values'][-1] for r in table)
     table_timedeltas = seq_of_strings_to_timedelta(seq)
     last_pos = i + 1

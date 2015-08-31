@@ -32,7 +32,7 @@ class ClientThread(threading.Thread):
 
   @asyncio.coroutine
   def create_client(self):
-    url = get_url()
+    url = get_url(host=self.host, port=self.port)
     self.ws = yield from websockets.connect(url,
         loop=self.loop)
 
