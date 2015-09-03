@@ -24,17 +24,28 @@ class ClientThread(threading.Thread):
     self.async = functools.partial(asyncio.async,
         loop=self.loop)
     self.queue = asyncio.Queue(loop=self.loop)
-    self.loop.run_until_complete(self.create_client())
-    self.loop.run_until_complete(self.waiting_for_commands())
-    self.loop.run_until_complete(self.ws.close())
-    self.loop.stop()
-    self.loop.close()
+    self.on_connecting()
+    try:
+      self.loop.run_until_complete(self.create_client())
+    except OSError as err:
+      self.on_connection_failed()
+      self.loop.close()
+    else:
+      self.on_connected()
+      self.loop.run_until_complete(self.waiting_for_commands())
+      self.on_disconnecting()
+      self.loop.run_until_complete(self.ws.close())
+      self.on_disconnected()
+      self.loop.close()
+
+  def stop(self):
+    self.queue.put_nowait(None)
 
   @asyncio.coroutine
   def create_client(self):
     url = get_url(host=self.host, port=self.port)
     self.ws = yield from websockets.connect(url,
-        loop=self.loop)
+      loop=self.loop)
 
   @asyncio.coroutine
   def waiting_for_commands(self):
@@ -70,6 +81,21 @@ class ClientThread(threading.Thread):
   def command(self, obj):
     self.loop.call_soon_threadsafe(self.async,
         self.queue.put(obj))
+
+  def on_connecting(self):
+    pass
+
+  def on_connected(self):
+    pass
+
+  def on_connection_failed(self):
+    pass
+
+  def on_disconnecting(self):
+    pass
+
+  def on_disconnected(self):
+    pass
 
   def on_message(self, message):
     print(message)
