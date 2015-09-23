@@ -7,6 +7,8 @@ import threading
 import time
 import tkinter
 
+from tajf.display import protocol as display_proto
+
 from . import infopanel
 
 START_SIZE = 640, 120
@@ -67,13 +69,18 @@ class Application(tkinter.Tk):
 
   TITLE = 'PVMOE Event Display'
 
+  code_handlers = {
+    display_proto.C_COMMAND: 'command',
+    }
+
   def __init__(self, precision=0):
     super().__init__()
     self.precision = precision
     self.withdraw()  # assembling in background...
     self.idle = threading.Event()
     self.idle.set()
-    self.queue = queue.Queue()
+    self.queue_recv = queue.Queue()
+    self.queue_send = queue.Queue()
     self._display_obj = None
     self.title(self.TITLE)
     self.infopanel = infopanel.InfoPanel(self)
@@ -89,16 +96,17 @@ class Application(tkinter.Tk):
 
   def _refresh(self):
     try:
-      obj = self.queue.get_nowait()
+      recv_obj = self.queue_recv.get_nowait()
     except queue.Empty:
       if self._display_obj:
-        obj = self._display_obj
+        display_obj = self._display_obj
         self._display_obj = None
-        self.set_display(obj)
-      if self.queue.unfinished_tasks == 0:
+        self.set_display(display_obj)
+      if self.queue_recv.unfinished_tasks == 0:
         self.idle.set()
     else:
-      self.set_mode(obj)
+      print('drecv', recv_obj)
+      self.handle_recv(recv_obj)
       self.idle.clear()
     self.after(REFRESH, self._refresh)
 
@@ -110,8 +118,31 @@ class Application(tkinter.Tk):
   def relief_display(self):
     self._display_obj = None
 
-  def set_mode(self, obj):
-    getattr(self, 'set_mode_{}'.format(obj['mode']))(obj)
+  def handle_recv(self, recv_obj):
+    i, code, payload_obj = recv_obj
+    handler_name = self.code_handlers.get(code)
+    if handler_name is None:
+      answer_code = display_proto.A_ERROR
+      answer_msg = 'Invalid client code: {}'.format(code)
+      self.queue_send.put((answer_code, i, answer_msg))
+    else:
+      handler_func_name = 'handle_{}'.format(handler_name)
+    try:
+      accepted = getattr(self, handler_func_name)(payload_obj)
+    except exc:
+      answer_code = display_proto.A_ERROR
+      answer_msg = str(exc)
+      self.queue_send.put((answer_code, i, answer_msg))
+    else:
+      if accepted is True:
+        answer_code = display_proto.A_ACCEPTED
+      else:
+        answer_code = display_proto.A_DENIED
+      self.queue_send.put((answer_code, i))
+
+  def handle_command(self, payload_obj):
+    #print(payload_obj)
+    return True
 
   def set_mode_highlight(self, obj):
     self.relief_worker_thread()
@@ -229,7 +260,6 @@ class HighlighterThread(MainWindowThread):
       after = copy.deepcopy(self.obj['table'][i:i+1])
       punch_pos = 2
     table = before + highl + after
-    print(table)
     seq = (r['values'][-1] for r in table)
     table_timedeltas = seq_of_strings_to_timedelta(seq)
     last_pos = i + 1
