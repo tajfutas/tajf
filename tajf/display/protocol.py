@@ -100,9 +100,6 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     tasks = {self.loop.create_task(cf()): k
         for k, cf in coro_funcs.items()}
     while True:
-      print('protocol.py/task_wait_loop', 'loop')
-      print('protocol.py/task_wait_loop', 'ws_proto:', object.__repr__(ws_proto))
-      print('protocol.py/task_wait_loop', 'ws_proto.queue_send:', object.__repr__(ws_proto.queue_send), 'size:', ws_proto.queue_send.qsize())
       done, pending = yield from asyncio.wait(
         list(tasks.keys()),
         return_when=asyncio.FIRST_COMPLETED,
@@ -111,19 +108,12 @@ class TajfDisplaySubprotocol(WsSubprotocol):
         k = tasks[t]
         handler_name = handle_name_fs.format(k)
         handler_coro = getattr(self, handler_name)
-        print('protocol.py/task_wait_loop', 'done:', handler_name, object.__repr__(t))
-        print('protocol.py/task_wait_loop', 'result:', handler_name, '...')
         result = yield from handler_coro(ws_proto, t)
-        print('protocol.py/task_wait_loop', 'result:', handler_name, 'OK', result)
         if result == 'BREAK':
-          break
+          return
         else:
           del tasks[t]
           tasks[self.loop.create_task(coro_funcs[k]())] = k
-  #   for t in pending:
-  #     k = tasks[t]
-  #     handler_name = handle_name_fs.format(k)
-  #     print('**', handler_name, t.done())
 
   @asyncio.coroutine
   def ws_handle_server(self, ws_proto, uri):
@@ -143,11 +133,8 @@ class TajfDisplaySubprotocol(WsSubprotocol):
 
   @asyncio.coroutine
   def ws_handle_server_on_request(self, ws_proto, task):
-    print('protocol.py/ws_handle_server_on_request', 'acquiring:', object.__repr__(ws_proto.lock), '...')
     yield from ws_proto.lock.acquire()
-    print('protocol.py/ws_handle_server_on_request', 'acquiring:', object.__repr__(ws_proto.lock), 'OK')
     data = task.result()
-    print('protocol.py/ws_handle_server_on_request', 'data:', data)
     if not data:
       return 'BREAK'
     code = data[:1]
@@ -160,18 +147,14 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     i = ws_proto.server.i
     ws_proto.server.peers_by_i[i] = ws_proto
     obj = i, code, payload_obj
-    print('protocol.py/ws_handle_server_on_request', 'yield from ws_proto.server.queue_to_disp.put(obj)', object.__repr__(ws_proto.server.queue_to_disp), '...')
     yield from ws_proto.server.queue_to_disp.put(obj)
-    print('protocol.py/ws_handle_server_on_request', 'yield from ws_proto.server.queue_to_disp.put(obj)', object.__repr__(ws_proto.server.queue_to_disp), 'OK')
 
   @asyncio.coroutine
   def ws_handle_server_on_display_response(self, ws_proto,
       task):
     obj = task.result()
-    print('protocol.py/ws_handle_server_on_display_response', 'obj:', obj)
     code = obj[0]
     if code in (A_ACCEPTED, A_DENIED, A_ERROR):
-      print('protocol.py/ws_handle_server_on_display_response', 'if code in (A_ACCEPTED, A_DENIED, A_ERROR)')
       i = obj[1]
       ws_proto = ws_proto.server.peers_by_i[i]
       del ws_proto.server.peers_by_i[i]
@@ -180,17 +163,9 @@ class TajfDisplaySubprotocol(WsSubprotocol):
         payload_data = json.dumps(obj[2]).encode('utf-8')
         compessed_payload_data = zlib.compress(payload_data)
         answer_data += compessed_payload_data
-      print('protocol.py/ws_handle_server_on_display_response', 'ws_proto:', object.__repr__(ws_proto))
-      print('protocol.py/ws_handle_server_on_display_response', 'ws_proto.queue_send:', object.__repr__(ws_proto.queue_send), 'size:', ws_proto.queue_send.qsize())
-      print('protocol.py/ws_handle_server_on_display_response', 'yield from ws_proto.queue_send.put(answer_data)', '...')
       yield from ws_proto.queue_send.put(answer_data)
-      print('protocol.py/ws_handle_server_on_display_response', 'yield from ws_proto.queue_send.put(answer_data)', 'OK', 'size:', ws_proto.queue_send.qsize())
-      #ws_proto.queue_send.put_nowait(answer_data)
-      #ws_proto.queue_send._put(answer_data)
       ws_proto.lock.release()
-      print('protocol.py/ws_handle_server_on_display_response', 'released', object.__repr__(ws_proto.lock))
     elif code == D_STATUSUPD:
-      print('protocol.py/ws_handle_server_on_display_response', 'elif code == D_STATUSUPD')
       payload_data = json.dumps(obj[1]).encode('utf-8')
       compessed_payload_data = zlib.compress(payload_data)
       data = code + compessed_payload_data
@@ -204,7 +179,6 @@ class TajfDisplaySubprotocol(WsSubprotocol):
   @asyncio.coroutine
   def ws_handle_server_on_response(self, ws_proto, task):
     data = task.result()
-    print('soresp', data)
     if not ws_proto.open:
       return 'BREAK'
     yield from ws_proto.send(data)
@@ -222,7 +196,6 @@ class TajfDisplaySubprotocol(WsSubprotocol):
   @asyncio.coroutine
   def ws_handle_client_on_response(self, ws_proto, task):
     data = task.result()
-    print('coresp', data)
     if not data:
       return 'BREAK'
     code = data[:1]
@@ -242,7 +215,6 @@ class TajfDisplaySubprotocol(WsSubprotocol):
   def ws_handle_client_on_request(self, ws_proto, task):
     yield from ws_proto.lock.acquire()
     obj = task.result()
-    print('coreq', obj)
     if not ws_proto.open:
       return 'BREAK'
     if obj in (None, b''):
@@ -410,12 +382,10 @@ class TajfDisplayClient:
   @asyncio.coroutine
   def recv(self):
     recv_obj = yield from self._ws_proto.queue_recv.get()
-    print('cr', recv_obj)
     return recv_obj
 
   @asyncio.coroutine
   def send(self, obj):
-    print('cs', obj)
     return (yield from self._ws_proto.queue_send.put(obj))
 
   @asyncio.coroutine
