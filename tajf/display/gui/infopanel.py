@@ -1,6 +1,12 @@
-import queue
+
+import threading
+import time
 import tkinter
 from tkinter.font import Font, nametofont
+
+from tajf import threads
+from tajf import timeconv
+
 
 class InfoPanelWidget(tkinter.Frame):
 
@@ -128,7 +134,7 @@ class InfoPanelWidget(tkinter.Frame):
 
 class InfoPanelHead(InfoPanelWidget):
 
-  DEFAULT_STYLE = 'grey'
+  DEFAULT_STYLE = 'white'
   N_ROWS = 2
   N_COLS = 1
 
@@ -161,6 +167,11 @@ class InfoPanelHead(InfoPanelWidget):
   def set_style_red(self):
     for w in self.iter_all_widgets():
       w.config(bg='red', fg='white', font=self.fonts['normal'])
+
+  def set_style_white(self):
+    for w in self.iter_all_widgets():
+      w.config(bg='white', fg='black',
+        font=self.fonts['normal'])
 
   def set_values(self, values):
     [w.config(text=str(values[i]))
@@ -291,11 +302,19 @@ class InfoPanel(tkinter.Frame):
   DEFAULT_BACKGROUND = 'black'
   DEFULT_BORDERWIDTH = 2
 
-  def __init__(self, master=None, queue_=None, cnf={}, **kw):
-    if not set(kw.keys()) & {'bg', 'background'}:
-      kw['bg'] = self.DEFAULT_BACKGROUND
-    super().__init__(master=master, cnf=cnf, **kw)
-    self.queue = queue_ or queue.Queue(maxsize=1)
+  MODES = ('highlight', 'highlight_punch', 'punch',
+      'results', 'static')
+
+  def __init__(self, master=None, status=None,
+      changed_cond=None, cnf={}, **kw):
+    cnf_ = {
+        'background': self.DEFAULT_BACKGROUND,
+        }
+    cnf_.update(tkinter._cnfmerge((cnf, kw)))
+    super().__init__(master=master, cnf=cnf_, **kw)
+    self._worker_thread = None
+    self.status = ({} if status is None else status)
+    self.changed_cond = changed_cond or threading.Condition()
     self.head = InfoPanelHead(self)
     self.head.grid(row=0, column=0, sticky='news')
     self.table = InfoPanelTable(self, bg='white')
@@ -304,9 +323,16 @@ class InfoPanel(tkinter.Frame):
     self.columnconfigure(1, weight=1)
     self.bind('<Configure>', self.on_configure)
 
+  def relief_worker_thread(self):
+    if self._worker_thread:
+      self._worker_thread.stop()
+      self._worker_thread = None
+
   def clear(self):
     self.head.clear()
     self.table.clear()
+    for key in set(self.status):
+      del self.status[key]
 
   def on_configure(self, event):
     self.adjust_borderwidth(event)
@@ -319,19 +345,194 @@ class InfoPanel(tkinter.Frame):
   def adjust_head_width(self, event):
     self.columnconfigure(0, minsize=event.height)
 
+  def show(self, payload_obj):
+    mode = payload_obj.get('mode')
+    if mode not in self.MODES:
+      raise ValueError('Invalid mode: {}'.format(mode))
+    f_mode_handler = getattr(self, 'set_mode_{}'.format(mode))
+    return f_mode_handler(payload_obj)
+
+  def close(self):
+    self.clear()
+    self.relief_worker_thread()
+    return True
+
+  def set_mode_highlight(self, payload_obj):
+    self.clear()
+    self.relief_worker_thread()
+    self.head.set(payload_obj['head'])
+    self._worker_thread = HighlighterThread(self, payload_obj)
+    self._worker_thread.start()
+    return True
+
+  def set_mode_highlight_punch(self, payload_obj):
+    self._worker_thread.punch_time = payload_obj['punch_time']
+    return True
+
+  def set_mode_punch(self, payload_obj):
+    self.clear()
+    self.relief_worker_thread()
+    self.head.set(payload_obj['head'])
+    self._worker_thread = PunchThread(self, payload_obj)
+    self._worker_thread.start()
+    return True
+
+  def set_mode_results(self, payload_obj):
+    self.clear()
+    self.relief_worker_thread()
+    self.head.set(payload_obj['head'])
+    self._worker_thread = ResultsThread(self, payload_obj)
+    self._worker_thread.start()
+    return True
+
+  def set_mode_static(self, payload_obj):
+    self.clear()
+    self.relief_worker_thread()
+    self.set_display(payload_obj)
+    self.idle.set()
+    return True
+
+  def set_display(self, payload_obj):
+    if 'head' in payload_obj:
+      self.head.set(payload_obj['head'])
+    if 'table' in payload_obj:
+      self.table.set(payload_obj['table'])
+
+
+class InfoPanelThread(threads.StoppableThread):
+
+  def __init__(self, infopanel, obj):
+    super().__init__()
+    self.ip = infopanel
+    self.obj = obj
+
+
+class HighlighterThread(InfoPanelThread):
+
+  def __init__(self, infopanel, obj):
+    super().__init__(infopanel, obj)
+    seq = (r['values'][-1] for r in self.obj['table'])
+    self.timedeltas = seq_of_strings_to_timedelta(seq)
+    s_hstart = self.obj['highlighted_start']
+    self.hstart = timeconv.string_to_datetime(s_hstart)
+    self.punch_time = None
+
+  def punch_time_norm(self, punch_time):
+    µs = punch_time.microseconds // 10**(6-self.ip.precision)
+    return datetime.timedelta(days=punch_time.days,
+        seconds=punch_time.seconds, microseconds=µs)
+
+  def get_highlight_display_obj(self):
+    punch_obj = self.get_punch_obj()
+    del punch_obj['mode']
+    del punch_obj['head']
+    punch_pos = punch_obj['punch_pos']
+    punch_obj['table'][punch_pos - 1]['style'] = 'emph1'
+    del punch_obj['punch_pos']
+    return punch_obj
+
+  def get_punch_obj(self):
+    if not self.punch_time or self.punch_time is True:
+      punch_time = datetime.datetime.now() - self.hstart
+    else:
+      punch_time = string_to_timedelta(self.punch_time)
+    punch_time = self.punch_time_norm(punch_time)
+    htime = timedelta_to_string(punch_time, self.ip.precision)
+    i = bisect.bisect_left(self.timedeltas, punch_time)
+    h = [i + 1] + self.obj['highlighted'] + [htime]
+    highl = [{'values': h}]
+    if i == 0:
+      before = []
+      after = copy.deepcopy(self.obj['table'][i:i+2])
+      punch_pos = 1
+    elif i == len(self.obj['table']):
+      before = copy.deepcopy(self.obj['table'][i-2:i])
+      after = []
+      punch_pos = len(before) + 1
+    else:
+      before = copy.deepcopy(self.obj['table'][i-1:i])
+      after = copy.deepcopy(self.obj['table'][i:i+1])
+      punch_pos = 2
+    table = before + highl + after
+    seq = (r['values'][-1] for r in table)
+    table_timedeltas = seq_of_strings_to_timedelta(seq)
+    last_pos = i + 1
+    for ti, tr in enumerate(table):
+      if ti == 0:
+        tr['values'][0] = last_pos
+      elif table_timedeltas[ti] == table_timedeltas[ti-1]:
+        tr['values'][0] = ''
+      else:
+        tr['values'][0] = last_pos
+      last_pos += 1
+    return {'mode': 'punch', 'head': self.obj['head'],
+            'table': table, 'punch_pos': punch_pos}
+
+  def run(self):
+    while not self.stopped():
+      if self.punch_time:
+        obj = self.get_punch_obj()
+        self.ip.set_mode_punch(obj)
+        break
+      obj = self.get_highlight_display_obj()
+      self.ip._display_obj = obj
+      if not self.stopped() and not self.punch_time:
+        time.sleep(REFRESH / 3000)
+      else:
+        break
+
+
+class PunchThread(InfoPanelThread):
+
+  BLINK_INTERVAL = 100
+  BLINK_COUNT = 10
+
+  def run(self):
+    t = self.obj.get('blink_interval', self.BLINK_INTERVAL)
+    N = self.obj.get('blink_count', self.BLINK_COUNT)
+    blinkobj = copy.deepcopy(self.obj)
+    punch_row_d = blinkobj['table'][self.obj['punch_pos'] - 1]
+    punch_row_d['style'] = 'emph1'
+    n = 0
+    while not self.stopped() and n < N:
+      if n == N - 1:
+        punch_row_d['style'] = 'emph2'
+      if n % 2:
+        self.ip._display_obj = blinkobj
+      else:
+        self.ip._display_obj = self.obj
+      n += 1
+      if not self.stopped():
+        time.sleep(t / 1000)
+
+
+class ResultsThread(InfoPanelThread):
+
+  TURN_INTERVAL = 5000
+
+  def run(self):
+    self.ip.status.update(self.obj)
+    t = self.ip.status.get('turn_interval', self.TURN_INTERVAL)
+    result_rows = len(self.obj['table'])
+    panel_rows = self.ip.table.N_ROWS
+    n = self.ip.status.setdefault('n', 0)
+    while not self.stopped() and n < result_rows:
+      self.ip.status['n'] = n
+      table = self.ip.status['table'][n:n+panel_rows]
+      self.ip.set_display({'table': table})
+      with self.ip.changed_cond:
+        self.ip.changed_cond.notify_all()
+      n += panel_rows
+      if not self.stopped():
+        time.sleep(t / 1000)
+    if not self.stopped():
+      self.ip.clear()
+      with self.ip.changed_cond:
+          self.ip.changed_cond.notify_all()
+
+
 if __name__ == "__main__":
-  import datetime
-  import tkinter as tk
-  r=tk.Tk()
-  ip = InfoPanel()
-  ip.pack(expand=True, fill='both')
-  ip.set([{'style': 'blue', 'values': ['NYT', 'cél']},
-         [
-          {'style': 'normal',
-           'values': [1, 'Dalos Máté', 'SPA', '37:31']},
-          {'style': 'emph1',
-           'values': [2, 'Tóth Tamás', 'TTE', '41:55']},
-          {'style': 'normal',
-           'values': [3, 'Lajtai Zoltán', 'PVM', '43:23']},
-         ]])
+  r = tkinter.Tk()
+  ip = InfoPanel(r)
+  ip.pack(expand=True, fill=tkinter.BOTH)
   r.mainloop()

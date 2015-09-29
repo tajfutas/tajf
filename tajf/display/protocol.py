@@ -21,7 +21,8 @@ PEERNAME_STRUCT_FMT = '<4BH'
 
 # codes
 # C_STATUSREQ = b'\xC5'
-C_COMMAND = b'\xCC'
+C_SHOW = b'\xC5'
+C_CLOSE = b'\xCC'
 A_ACCEPTED = b'\xAA'
 A_DENIED = b'\xAD'
 A_ERROR = b'\xAE'
@@ -138,7 +139,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     if not data:
       return 'BREAK'
     code = data[:1]
-    if code == C_COMMAND:
+    if code in (C_SHOW, C_CLOSE):
       payload_data = zlib.decompress(data[1:])
       payload_obj = json.loads(payload_data.decode('utf-8'))
     else:
@@ -221,7 +222,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
       data = b''
     else:
       code = obj[0]
-      if code == C_COMMAND:
+      if code in (C_SHOW, C_CLOSE):
         payload_data = json.dumps(obj[1]).encode('utf-8')
         compessed_payload_data = zlib.compress(payload_data)
         data = code + compessed_payload_data
