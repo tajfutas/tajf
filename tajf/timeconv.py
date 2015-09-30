@@ -43,6 +43,11 @@ def seq_of_strings_to_timedelta(seq):
   return result
 
 
+def timedelta_to_milliseconds(td):
+    return (td.days * 86400000 + td.seconds * 1000
+        + round(td.microseconds/ 1000))
+
+
 # based on source code of datetime.py
 def timedelta_to_string(td, precision=0):
     mm, ss = divmod(td.seconds, 60)
