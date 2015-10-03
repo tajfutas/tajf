@@ -92,3 +92,10 @@ class Application(tkinter.Tk):
     self.main.pack(expand=True, fill='both')
     self.minsize(*START_SIZE)
     self.deiconify()  # and show it
+    #self.command = self.main.command
+    self.changed_cond = self.main.changed_cond
+    self.status = self.main.status
+
+  def command(self, *args, **kwgs):
+    print('args', args)
+    return self.main.command(*args, **kwgs)

@@ -122,8 +122,8 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     ws_proto.server.peers.add(ws_proto)
     coro_funcs = {
       'on_request': ws_proto.recv,
-      'on_display_response':
-          ws_proto.server.queue_from_disp.get,
+      #'on_display_response':
+      #    ws_proto.server.queue_from_disp.get,
       'on_response': ws_proto.queue_send.get,
     }
     handle_name_fs = 'ws_handle_server_{}'
@@ -134,7 +134,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
 
   @asyncio.coroutine
   def ws_handle_server_on_request(self, ws_proto, task):
-    yield from ws_proto.lock.acquire()
+    #yield from ws_proto.lock.acquire()  # TODO: Temporary
     data = task.result()
     if not data:
       return 'BREAK'
@@ -142,6 +142,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     if code in (C_SHOW, C_CLOSE):
       payload_data = zlib.decompress(data[1:])
       payload_obj = json.loads(payload_data.decode('utf-8'))
+      #print('*******', payload_obj)
     else:
       errfs = 'invalid client request code: {X}'
       raise ProtocolError(errfs.format(code[0]))
@@ -153,6 +154,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
   @asyncio.coroutine
   def ws_handle_server_on_display_response(self, ws_proto,
       task):
+    return  # TEMPORARY
     obj = task.result()
     code = obj[0]
     if code in (A_ACCEPTED, A_DENIED, A_ERROR):
@@ -196,12 +198,13 @@ class TajfDisplaySubprotocol(WsSubprotocol):
 
   @asyncio.coroutine
   def ws_handle_client_on_response(self, ws_proto, task):
+    return  # TEMPORARY
     data = task.result()
     if not data:
       return 'BREAK'
     code = data[:1]
     if code in (A_ACCEPTED, A_DENIED):
-      ws_proto.lock.release()
+      #ws_proto.lock.release()
       obj = data,
     elif code == D_STATUSUPD:
       payload_data = zlib.decompress(data[1:])
@@ -214,7 +217,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
 
   @asyncio.coroutine
   def ws_handle_client_on_request(self, ws_proto, task):
-    yield from ws_proto.lock.acquire()
+    #yield from ws_proto.lock.acquire()
     obj = task.result()
     if not ws_proto.open:
       return 'BREAK'
@@ -223,7 +226,8 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     else:
       code = obj[0]
       if code in (C_SHOW, C_CLOSE):
-        payload_data = json.dumps(obj[1]).encode('utf-8')
+        print('itt', obj[1:])
+        payload_data = json.dumps(obj[1:]).encode('utf-8')
         compessed_payload_data = zlib.compress(payload_data)
         data = code + compessed_payload_data
       else:

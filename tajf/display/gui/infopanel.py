@@ -182,7 +182,12 @@ class InfoPanelHead(InfoPanelWidget):
 
   def set(self, obj):
     self.set_style(obj['style'])
-    self.set_values(obj['values'])
+    if obj['follow']:
+      values = copy.copy(obj['values'])
+      values[1] = '→' + str(values[1])
+    else:
+      values = obj['values']
+    self.set_values(values)
 
 
 class InfoPanelTable(InfoPanelWidget):
@@ -461,7 +466,6 @@ class FollowerThread(InfoPanelThread):
     while not self.stopped():
       if self.punch_time:
         punch_obj = self.get_punch_obj()
-        del punch_obj['head']
         self.ip.set_mode_punch(punch_obj)
         break
       self.ip.set_display(self.get_follow_display_obj())
@@ -476,6 +480,9 @@ class PunchThread(InfoPanelThread):
   RELAX_INTERVAL = 5000
 
   def run(self):
+    self.ip.status.update(self.obj)
+    with self.ip.changed_cond:
+      self.ip.changed_cond.notify_all()
     t = self.obj.get('blink_interval', self.BLINK_INTERVAL)
     N = self.obj.get('blink_count', self.BLINK_COUNT)
     R = self.obj.get('relax_interval', self.RELAX_INTERVAL)
@@ -497,6 +504,10 @@ class PunchThread(InfoPanelThread):
           self.ip.set_display(self.obj)
         n += 1
       elif relax_n < relax_N:
+        if relax_n == 0:
+          relaxobj = copy.deepcopy(blinkobj)
+          relaxobj['head']['follow'] = False
+          self.ip.set_display(relaxobj)  # TODO: notify_all
         relax_n += 1
       else:
         break
