@@ -324,7 +324,7 @@ class TajfDisplayServer:
       subprotocols = [TajfDisplaySubprotocol(self.loop)]
       self.ws_handler = WsSubprotocolHandler(subprotocols)
     else:
-      self.ws_handler = ws_hanler
+      self.ws_handler = ws_handler
     self.host = host or DEFAULT_SERVER_IP
     self.port = port or DEFAULT_PORT
     self.class_ = class_
