@@ -30,18 +30,16 @@ class ClientThread(threading.Thread):
     self.loop.stop()
     self.loop.close()
 
-  @asyncio.coroutine
-  def create_client(self):
+  async def create_client(self):
     url = get_url()
-    self.ws = yield from websockets.connect(url,
+    self.ws = await websockets.connect(url,
         loop=self.loop)
 
-  @asyncio.coroutine
-  def waiting_for_commands(self):
+  async def waiting_for_commands(self):
     while True:
       listener_task = self.loop.create_task(self.ws.recv())
       producer_task = self.loop.create_task(self.queue.get())
-      done, pending = yield from asyncio.wait(
+      done, pending = await asyncio.wait(
         [listener_task, producer_task],
         return_when=asyncio.FIRST_COMPLETED,
         loop=self.loop)
@@ -74,21 +72,19 @@ class ClientThread(threading.Thread):
 
 
 def applydefs(f):
-  @asyncio.coroutine
   @functools.wraps(f)
-  def wrapper(ws=None, loop=None, **kwds):
+  async def wrapper(ws=None, loop=None, **kwds):
     if loop is None:
       loop = asyncio.get_event_loop()
     if ws is None:
       url = get_url(**kwds)
-      ws = yield from websockets.connect(url, loop=loop)
-    yield from f(ws, loop)
+      ws = await websockets.connect(url, loop=loop)
+    await f(ws, loop)
   return wrapper
 
 
-@asyncio.coroutine
 @applydefs
-def highlight(ws=None, loop=None):
+async def highlight(ws=None, loop=None):
   now = datetime.datetime.now()
   td = datetime.timedelta(minutes=37, seconds=21)
   hstart = now - td
@@ -104,18 +100,17 @@ def highlight(ws=None, loop=None):
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from ws.send(data)
-  yield from asyncio.sleep(22, loop=loop)
+  await ws.send(data)
+  await asyncio.sleep(22, loop=loop)
   obj = {'mode': 'highlight_punch',
          'punch_time': True}
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from ws.send(data)
+  await ws.send(data)
 
 
-@asyncio.coroutine
 @applydefs
-def punch(ws=None, loop=None):
+async def punch(ws=None, loop=None):
   obj = {'mode': 'punch',
     'head': {'style': 'blue', 'values': ['NYT', 'cél']},
     'table': [
@@ -127,12 +122,11 @@ def punch(ws=None, loop=None):
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from ws.send(data)
+  await ws.send(data)
 
 
-@asyncio.coroutine
 @applydefs
-def results(ws=None, loop=None):
+async def results(ws=None, loop=None):
   obj = {'mode': 'results',
     'head': {'style': 'blue', 'values': ['F21E', '']},
     'table': [
@@ -171,12 +165,11 @@ def results(ws=None, loop=None):
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from ws.send(data)
+  await ws.send(data)
 
 
-@asyncio.coroutine
 @applydefs
-def static(ws=None, loop=None):
+async def static(ws=None, loop=None):
   obj = {'mode': 'static',
     'head': {'style': 'blue', 'values': ['NYT', 'cél']},
     'table': [
@@ -187,8 +180,8 @@ def static(ws=None, loop=None):
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from ws.send(data)
-  yield from asyncio.sleep(5, loop=loop)
+  await ws.send(data)
+  await asyncio.sleep(5, loop=loop)
   obj = {'mode': 'static',
     'head': {'style': 'red', 'values': ['NYT', '21']},
     'table': [
@@ -199,7 +192,7 @@ def static(ws=None, loop=None):
     }
   data = json.dumps(obj).encode('utf-8')
   data = zlib.compress(data)
-  yield from ws.send(data)
+  await ws.send(data)
   # print("> {!r}".format(obj))
 
 

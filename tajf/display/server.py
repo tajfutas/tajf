@@ -41,16 +41,15 @@ class ServerThread(threading.Thread):
     self.loop.create_task(self.hook_queues())
     self.loop.run_forever()
 
-  @asyncio.coroutine
-  def hook_queues(self):
+  async def hook_queues(self):
     while True:
-      obj = yield from self.server.queue_to_disp.get()
+      obj = await self.server.queue_to_disp.get()
       if obj is None:
         break
       i = obj[0]
       command_obj = (obj[1],) + tuple(obj[2])
       answer_code, exc = self.app.command(*command_obj)
-      yield from self.server.queue_from_disp.put(answer_code)
+      await self.server.queue_from_disp.put(answer_code)
       if answer_code is None:
         break
     self.loop.stop()

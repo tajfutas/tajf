@@ -51,34 +51,32 @@ class ClientThread(threading.Thread):
   def stop(self):
     self.queue_send.put(None)
 
-  @asyncio.coroutine
-  def hook_queues(self):
+  async def hook_queues(self):
     while True:
       recv_task = self.loop.create_task(self.client.recv())
       send_task = self.loop.create_task(
           self._queue_send_get_coro())
-      done, pending = yield from asyncio.wait(
+      done, pending = await asyncio.wait(
           [recv_task, send_task],
           return_when=asyncio.FIRST_COMPLETED,
           loop=self.loop)
       if recv_task in done:
         obj = recv_task.result()
-        yield from self._queue_recv_put_coro(obj)
+        await self._queue_recv_put_coro(obj)
         if obj is None:
           break
       else:
         recv_task.cancel()
       if send_task in done:
         obj = send_task.result()
-        yield from self.client.send(obj)
+        await self.client.send(obj)
         if obj is None:
           break
       else:
         send_task.cancel()
     self.loop.stop()
 
-  @asyncio.coroutine
-  def _queue_send_get_coro(self):
+  async def _queue_send_get_coro(self):
     while True:
       try:
         obj = self.queue_send.get_nowait()
@@ -87,10 +85,9 @@ class ClientThread(threading.Thread):
       else:
         print('csg', obj)
         return obj
-      yield from asyncio.sleep(self.timeout, loop=self.loop)
+      await asyncio.sleep(self.timeout, loop=self.loop)
 
-  @asyncio.coroutine
-  def _queue_recv_put_coro(self, obj):
+  async def _queue_recv_put_coro(self, obj):
     while True:
       try:
         self.queue_recv.put_nowait(obj)
@@ -99,7 +96,7 @@ class ClientThread(threading.Thread):
       else:
         print('crp', obj)
         break
-      yield from asyncio.sleep(self.timeout, loop=self.loop)
+      await asyncio.sleep(self.timeout, loop=self.loop)
 
   def on_connecting(self):
     pass
