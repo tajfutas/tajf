@@ -6,6 +6,7 @@ from urllib import parse
 import zlib
 
 import websockets
+import websockets.server
 
 DEFAULT_SERVER_IP = '0.0.0.0'
 DEFAULT_CLIENT_IP = '127.0.0.1'
@@ -119,23 +120,24 @@ class TajfDisplaySubprotocol(WsSubprotocol):
   @asyncio.coroutine
   def ws_handle_server(self, ws_proto, uri):
     # register the protocol at server
-    ws_proto.server.peers.add(ws_proto)
+    ws_proto.ws_server.peers.add(ws_proto)
     coro_funcs = {
       'on_request': ws_proto.recv,
       #'on_display_response':
-      #    ws_proto.server.queue_from_disp.get,
+      #    ws_proto.ws_server.queue_from_disp.get,
       'on_response': ws_proto.queue_send.get,
     }
     handle_name_fs = 'ws_handle_server_{}'
     yield from self.task_wait_loop(ws_proto, coro_funcs,
         handle_name_fs)
     # deregister the protocol at server
-    ws_proto.server.peers.remove(ws_proto)
+    ws_proto.ws_server.peers.remove(ws_proto)
 
   @asyncio.coroutine
   def ws_handle_server_on_request(self, ws_proto, task):
     #yield from ws_proto.lock.acquire()  # TODO: Temporary
     data = task.result()
+    print('server req', data)
     if not data:
       return 'BREAK'
     code = data[:1]
@@ -146,10 +148,10 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     else:
       errfs = 'invalid client request code: {X}'
       raise ProtocolError(errfs.format(code[0]))
-    i = ws_proto.server.i
-    ws_proto.server.peers_by_i[i] = ws_proto
+    i = ws_proto.ws_server.i
+    ws_proto.ws_server.peers_by_i[i] = ws_proto
     obj = i, code, payload_obj
-    yield from ws_proto.server.queue_to_disp.put(obj)
+    yield from ws_proto.ws_server.queue_to_disp.put(obj)
 
   @asyncio.coroutine
   def ws_handle_server_on_display_response(self, ws_proto,
@@ -159,8 +161,8 @@ class TajfDisplaySubprotocol(WsSubprotocol):
     code = obj[0]
     if code in (A_ACCEPTED, A_DENIED, A_ERROR):
       i = obj[1]
-      ws_proto = ws_proto.server.peers_by_i[i]
-      del ws_proto.server.peers_by_i[i]
+      ws_proto = ws_proto.ws_server.peers_by_i[i]
+      del ws_proto.ws_server.peers_by_i[i]
       answer_data = code
       if code == A_ERROR:
         payload_data = json.dumps(obj[2]).encode('utf-8')
@@ -173,7 +175,7 @@ class TajfDisplaySubprotocol(WsSubprotocol):
       compessed_payload_data = zlib.compress(payload_data)
       data = code + compessed_payload_data
       # broadcast it
-      for p in ws_proto.server.peers:
+      for p in ws_proto.ws_server.peers:
         yield from p.queue_send.put(data)
     else:
       errfs = 'invalid display response code: {X}'
@@ -269,20 +271,18 @@ class TajfDisplayServerProtocol(
 
   is_client = False
 
-  def __init__(self, server, *args, **kwgs):
-    self.server = server
-    self.loop = self.server.loop
-    if 'loop' in kwgs:
-      assert kwgs['loop'] == self.loop
-    else:
-      kwgs['loop'] = self.loop
-    super().__init__(*args, **kwgs)
+  def __init__(self, *args, **kwds):
+    super().__init__(*args, **kwds)
+    self.loop = self.ws_server.loop
     self.n = -1
     self.lock = asyncio.Lock(loop=self.loop)
     self.queue_send = asyncio.Queue(loop=self.loop)
 
   def client_connected(self, reader, writer):
     super().client_connected(reader, writer)
+
+  def connection_made(self, transport):
+    super().connection_made(transport)
 
 
 class TajfDisplayClientProtocol(
@@ -311,23 +311,27 @@ class AutoIncrement:
     raise AttributeError('Can\'t delete attribute')
 
 
-class TajfDisplayServer:
+class TajfDisplayServer(websockets.server.WebSocketServer):
 
   i = AutoIncrement()
 
   def __init__(self, *, ws_handler=None, host=None, port=None,
-      loop=None, class_=TajfDisplayServerProtocol,
+      loop=None, proto_class=TajfDisplayServerProtocol,
       origins=None, extra_headers=None):
-    self._server = None
-    self.loop = loop or asyncio.get_event_loop()
+    super().__init__(loop=loop)
+    if self.loop is None:
+      self.loop = asyncio.get_event_loop()
+    self.server = None
+
     if ws_handler is None:
       subprotocols = [TajfDisplaySubprotocol(self.loop)]
       self.ws_handler = WsSubprotocolHandler(subprotocols)
     else:
       self.ws_handler = ws_handler
+
     self.host = host or DEFAULT_SERVER_IP
     self.port = port or DEFAULT_PORT
-    self.class_ = class_
+    self.proto_class = proto_class
     self.origins = origins
     self.extra_headers = extra_headers
     self.queue_to_disp = asyncio.Queue(loop=self.loop)
@@ -339,24 +343,30 @@ class TajfDisplayServer:
     self.loop.create_task(self.serve(**kwds))
 
   def stop(self):
-    if self._server is not None:
-      self._server.close()
-      return self.loop.create_task(self._server.wait_closed())
+    if self.server is not None:
+      self.close()
+      return self.loop.create_task(self.wait_closed())
 
   # based on websockets.server.serve()
   @asyncio.coroutine
-  def serve(self, **kwds):
+  async def serve(self, **kwds):
     self.secure = kwds.get('ssl') is not None
-    self._server = yield from self.loop.create_server(
-        self.protocol_factory, self.host, self.port, **kwds)
-    return self._server
+    self.wrap((await self.loop.create_server(self.factory,
+      self.host, self.port, **kwds)))
+    return self.server
 
-  def protocol_factory(self):
-    proto = self.class_(self, self.ws_handler, host=self.host,
-      port=self.port, secure=self.secure, origins=self.origins,
+  def factory(self):
+    factory = self.proto_class(
+      self.ws_handler,
+      self,
+      host=self.host,
+      port=self.port,
+      secure=self.secure,
+      origins=self.origins,
       subprotocols=self.ws_handler.namelist(),
-      extra_headers=self.extra_headers, loop=self.loop)
-    return proto
+      extra_headers=self.extra_headers,
+      loop=self.loop)
+    return factory
 
 
 class TajfDisplayClient:
